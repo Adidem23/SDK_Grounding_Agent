@@ -1,0 +1,9 @@
+mcp 
+fastmcp
+python-dotenv
+uvicorn 
+fastapi
+google-adk
+langchain
+langgraph
+langchain-mcp-adapters
