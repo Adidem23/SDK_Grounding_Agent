@@ -1,0 +1,17 @@
+import asyncio
+from fastmcp import Client
+
+
+async def call_mcp_tools():
+
+    client=Client(
+        "https://56e6-152-58-17-184.ngrok-free.app/mcp"
+    )
+
+    async with client:
+        result = await client.call_tool("call_Parser_Service", {"package_name": "opik"})
+        print(result)
+
+
+if __name__=="__main__":
+    asyncio.run(call_mcp_tools())
