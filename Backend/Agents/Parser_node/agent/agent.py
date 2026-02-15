@@ -65,10 +65,10 @@ If failure:
         )
 
 
-    async def call_mcp_tools(package_name:str|None):
+    async def call_mcp_tools(self,package_name:str|None):
 
         client=Client(
-            "http://localhost:9000/mcp"
+            "https://961e-152-58-17-184.ngrok-free.app/mcp"
         )
 
         async with client:
