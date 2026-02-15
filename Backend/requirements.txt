@@ -16,3 +16,4 @@ langchain
 opik
 mcp 
 fastmcp
+pinecone

@@ -68,10 +68,10 @@ If failure:
     async def call_mcp_tools(self,package_name:str|None):
 
         client=Client(
-            "https://961e-152-58-17-184.ngrok-free.app/mcp"
+            "https://88ac-152-58-17-184.ngrok-free.app/mcp"
         )
 
         async with client:
-            result = await client.call_tool("call_Parser_Service", {"package_name":package_name})
-            
-            return result
+            result = await client.call_tool("call_Parser_Service", {"package_name":f"{package_name}"})
+            print(result)
+            return result.data['response']

@@ -1,3 +1,4 @@
+import json
 from a2a.server.agent_execution import AgentExecutor , RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
@@ -25,8 +26,12 @@ class SupervisorAgentExecutor(AgentExecutor):
 
         if(response):
             result= await self.agent.delegateTasks(PARSER_NODE_URL,response)
-            if(result):
-                final_answer=await self.agent.delegateTasks(FINAL_ANSWER_NODE_URL,result)
+            JSON_result = json.loads(result)
+            upload_result=await self.agent.uploadSDKSchemaToPinecone(JSON_result)
+            print(upload_result)
+            # if(result):
+            #     final_answer=await self.agent.delegateTasks(FINAL_ANSWER_NODE_URL,user_query)
+            #     print(final_answer)
           
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
