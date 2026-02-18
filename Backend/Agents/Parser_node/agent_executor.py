@@ -19,6 +19,9 @@ class ParserNodeAgentExecutor(AgentExecutor):
         package_name= context.get_user_input()
 
         response=await self.agent.call_mcp_tools(package_name)
+        
+        if(response):
+            result=await self.agent.uploadSDKSchemaToPinecone(response)
 
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
@@ -26,7 +29,7 @@ class ParserNodeAgentExecutor(AgentExecutor):
                 task_id=context.task_id,
                 artifact=new_text_artifact(
                     "Parser_agent_answer",
-                     str(response)
+                     str(result)
                 )
 
             )

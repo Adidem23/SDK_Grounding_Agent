@@ -20,7 +20,7 @@ async def call_Parser_Service(package_name: str | None):
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=100) as client:
             response = await client.post(url, json=payload)
 
         return {

@@ -26,9 +26,9 @@ class SupervisorAgentExecutor(AgentExecutor):
 
         if(response):
             result= await self.agent.delegateTasks(PARSER_NODE_URL,response)
-            JSON_result = json.loads(result)
-            upload_result=await self.agent.uploadSDKSchemaToPinecone(JSON_result)
-            print(upload_result)
+            # JSON_result = json.loads(result)
+            # upload_result=await self.agent.uploadSDKSchemaToPinecone(JSON_result)
+            # print(upload_result)
             # if(result):
             #     final_answer=await self.agent.delegateTasks(FINAL_ANSWER_NODE_URL,user_query)
             #     print(final_answer)
@@ -39,7 +39,7 @@ class SupervisorAgentExecutor(AgentExecutor):
                 task_id=context.task_id,
                 artifact=new_text_artifact(
                     "final_answer",
-                    str(final_answer)
+                    str(result)
                 ),
             )
         )

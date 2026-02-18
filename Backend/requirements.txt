@@ -17,3 +17,4 @@ opik
 mcp 
 fastmcp
 pinecone
+scikit-learn
