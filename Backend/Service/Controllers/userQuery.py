@@ -12,9 +12,13 @@ def breathingMessage():
 async def processUserQuery(request:packageNameQuery):
 
     packageName=request.packageName
+    
+    userQuery= request.userPackageQuery
 
     engine=SDKGroundingEngine()
 
-    result=engine.process(packageName)
+    engine.load_package(packageName)
 
-    return result
+    response=engine.search(packageName,userQuery)
+
+    return response

@@ -7,6 +7,7 @@ from google.genai import types
 from google.adk.tools.toolbox_toolset import ToolboxToolset
 from pinecone import Pinecone
 from fastmcp import Client
+from agent.client_class import Agent_Client_Class
 
 
 load_dotenv()
@@ -66,117 +67,88 @@ If failure:
 
         )
 
-    def truncate_text(self,text, max_chars=1500):
-        if not text:
-            return "No description available."
-        return text[:max_chars]
-            
+        self.packageAgent=Agent(
+            name="Package_Name_Extractor",
+            model="gemini-2.5-flash",
+            instruction=("""
+You are a Python package name extraction engine.
 
-    async def schema_to_chunks(self,schema: dict, package_name: str):
-        chunks = []
+Your task is to extract the most relevant Python package name mentioned or implied in the user query.
 
-        for class_path, class_data in schema.items():
-            class_name = class_path.split(".")[-1]
-            module_name = class_data.get("module")
-            class_description = self.truncate_text(class_data.get("description"))
+Rules:
+- Return ONLY the package name.
+- Output must be lowercase.
+- Do not include explanations.
+- Do not include extra words.
+- Do not include punctuation.
+- If no clear Python package can be identified, return: unknown
+- If multiple packages are mentioned, return the most relevant one.
 
+Examples:
 
-            class_chunk_text = f"""
-            SDK Documentation
+User: how to upsert a collection in pinecone
+Output: pinecone
 
-            Package: {package_name}
-            Type: Class
-            Class Name: {class_name}
-            Module: {module_name}
+User: how to create api using fastapi
+Output: fastapi
 
-            Description:
-            {class_description}
-            """
+User: how to send request using requests library
+Output: requests
 
-            chunks.append({
-                "id": f"{package_name}:{class_name}",
-                "chunk_text": class_chunk_text.strip(),
-                "metadata": {
-                    "package": package_name,
-                    "type": "class",
-                    "class": class_name,
-                    "module": module_name
-                }
-            })
-
-            methods = class_data.get("methods", {})
-
-            for method_name, method_data in methods.items():
-                signature = self.truncate_text(method_data.get("signature"))
-                description = self.truncate_text(method_data.get("description"))
-
-                method_chunk_text = f"""
-                SDK Documentation
-
-                Package: {package_name}
-                Type: Method
-                Class Name: {class_name}
-                Method Name: {method_name}
-
-                Signature:
-                {signature}
-
-                Description:
-                {description}
-                """
-
-                chunks.append({
-                    "id": f"{package_name}:{class_name}:{method_name}",
-                    "chunk_text": method_chunk_text.strip(),
-                    "metadata": {
-                        "package": package_name,
-                        "type": "method",
-                        "class": class_name,
-                        "method": method_name,
-                        "module": module_name
-                    }
-                })
-
-        return chunks
-
-    async def uploadSDKSchemaToPinecone(self,response):
-        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY",""))
+User: explain what is vector database
+Output: unknown
 
 
-        pc.create_index_for_model(
-        name=response['package'],
-        cloud="aws",
-        region="us-east-1",
-        embed={
-            "model": "llama-text-embed-v2",
-            "field_map": {"text": "chunk_text"}
-        }
+""")
         )
 
-        print(f'Index_For_Package_{response['package']}')
+    async def extractPythonModule(self,user_query:str|None):
+       
+        sessionService=InMemorySessionService()
 
-        schema=response['schema']
-        package_name=response['package']
+        await sessionService.create_session(
+            app_name="Package_Name_Extractor",
+            user_id="user1",
+            session_id="session1",
+        )
 
-        chunks = await self.schema_to_chunks(schema, package_name)
+        runner=Runner(
+            app_name="Package_Name_Extractor",
+            agent=self.packageAgent,
+            session_service=sessionService,
+        )
 
-        print(f"Upserting {len(chunks)} chunks...")
+        user_message=types.Content(
+            role="user",
+            parts=[types.Part(text=user_query)]
+        )
 
-        dense_index = pc.Index(response['package'])
-        
-        dense_index.upsert_records("example-namespace", chunks)
+        async for event in runner.run_async(
+            user_id="user1",
+            session_id="session1",
+            new_message=user_message
+        ):
+            
+            if event.is_final_response():
+                return event.content.parts[0].text
+                
 
-        print("Upsert complete.")
-
-        return {"Message":'Uploaded Chunks in Vector DB'}
-
-
-    async def call_mcp_tools(self,package_name:str|None):
+    async def call_mcp_tools(self,package_name:str|None,user_query:str|None):
 
         client=Client(
             "http://localhost:9000/mcp"
         )
 
         async with client:
-            result = await client.call_tool("call_Parser_Service", {"package_name":f"{package_name}"})
-            return result.data['response']
+
+            result = await client.call_tool("call_Parser_Service", {"package_name":f"{package_name}","user_query":user_query})
+
+            return result
+    
+    async def delegateTasks(self, BASE_AGENT_URL:str|None , user_input:str|None):
+       
+        new_client=Agent_Client_Class()
+
+        response= await new_client.create_connection(BASE_AGENT_URL,user_input)
+
+        return response

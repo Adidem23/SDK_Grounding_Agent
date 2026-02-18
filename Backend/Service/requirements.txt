@@ -2,3 +2,4 @@ uvicorn
 fastapi
 pydantic
 packaging
+scikit-learn

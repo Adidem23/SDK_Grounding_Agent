@@ -9,8 +9,8 @@ async def call_mcp_tools():
     )
 
     async with client:
-        result = await client.call_tool("call_Parser_Service", {"package_name": "fastapi"})
-        print(result.data["response"])
+        result = await client.call_tool("call_Parser_Service", {"package_name": "fastapi","user_query":"how to use CORSmiddleWare in fastapi"})
+        print(result)
 
 
 if __name__=="__main__":

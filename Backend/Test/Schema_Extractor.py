@@ -6,13 +6,20 @@ import sys
 import os
 import json
 import difflib
+import pickle
 import urllib.request
 import urllib.error
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sentence_transformers import SentenceTransformer
-import numpy as np
+
+
+# =====================================================
+# CONFIG
+# =====================================================
+
+CACHE_DIR = "sdk_cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 
 # =====================================================
@@ -34,11 +41,7 @@ class PackageResolver:
 
         if metadata:
             if not self._is_python_compatible(metadata):
-                return {
-                    "status": "incompatible_python",
-                    "package": base_name,
-                    "requires_python": metadata["info"].get("requires_python")
-                }
+                return {"status": "incompatible_python", "package": base_name}
             return {"status": "valid", "package": base_name}
 
         suggestions = difflib.get_close_matches(base_name, self.package_list, n=3, cutoff=0.75)
@@ -159,10 +162,10 @@ class SDKSchemaExtractor:
 
 
 # =====================================================
-# HYBRID SEARCH ENGINE (TF-IDF + SEMANTIC)
+# LIGHTWEIGHT SEARCH ENGINE
 # =====================================================
 
-class HybridSearchEngine:
+class LightweightSearchEngine:
     def __init__(self, schema):
         self.schema = schema
         self.documents = []
@@ -170,49 +173,58 @@ class HybridSearchEngine:
 
         self._build_documents()
 
-        # TF-IDF
-        self.vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
-        self.tfidf_matrix = self.vectorizer.fit_transform(self.documents)
+        self.vectorizer = TfidfVectorizer(
+            stop_words="english",
+            ngram_range=(1, 2),
+            max_features=10000
+        )
 
-        # Semantic Model (Local, No API)
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
-        self.semantic_embeddings = self.model.encode(self.documents, show_progress_bar=True)
+        print("🔧 Building TF-IDF index...")
+        self.tfidf_matrix = self.vectorizer.fit_transform(self.documents)
+        print("✅ Index ready.")
 
     def _build_documents(self):
         for class_path, class_data in self.schema.items():
-            text = f"Class {class_path}\n{class_data.get('description', '')}\n"
-            for m, d in class_data.get("methods", {}).items():
-                text += f"Method {m} {d.get('signature')} {d.get('description')}\n"
+
+            class_name = class_path.split(".")[-1]
+            description = (class_data.get("description") or "")[:400]
+            method_names = " ".join(class_data.get("methods", {}).keys())
+
+            text = f"""
+            Class {class_name}
+            Description {description}
+            Methods {method_names}
+            """
+
             self.documents.append(text)
             self.class_keys.append(class_path)
 
-    def search(self, query, top_k=5):
-        # Step 1: TF-IDF shortlist
+    def search(self, query, top_k=3):
+
         query_vec = self.vectorizer.transform([query])
         scores = (self.tfidf_matrix @ query_vec.T).toarray().flatten()
-        top_indices = scores.argsort()[::-1][:20]
 
-        # Step 2: Semantic rerank
-        query_embedding = self.model.encode([query])[0]
+        top_indices = scores.argsort()[::-1][:top_k]
 
-        candidate_embeddings = self.semantic_embeddings[top_indices]
-        similarities = np.dot(candidate_embeddings, query_embedding)
+        results = []
+        for idx in top_indices:
+            if scores[idx] <= 0:
+                continue
 
-        reranked = np.argsort(similarities)[::-1][:top_k]
+            class_path = self.class_keys[idx]
 
-        final_results = []
-        for idx in reranked:
-            real_index = top_indices[idx]
-            class_path = self.class_keys[real_index]
-            final_results.append({
+            results.append({
                 "class_path": class_path,
                 "description": self.schema[class_path]["description"],
                 "methods": self.schema[class_path]["methods"]
             })
 
-        return final_results
+        return results
 
 
+# =====================================================
+# GROUNDING ENGINE
+# =====================================================
 
 class SDKGroundingEngine:
     def __init__(self):
@@ -220,21 +232,49 @@ class SDKGroundingEngine:
         self.schema_cache = {}
         self.search_cache = {}
 
+    def _get_package_cache_paths(self, pkg):
+        pkg_dir = os.path.join(CACHE_DIR, pkg)
+        os.makedirs(pkg_dir, exist_ok=True)
+        return {
+            "schema": os.path.join(pkg_dir, "schema.json"),
+            "index": os.path.join(pkg_dir, "index.pkl")
+        }
+
     def load_package(self, package_name):
+
         resolution = self.resolver.resolve(package_name)
         if resolution["status"] != "valid":
             return resolution
 
         pkg = resolution["package"]
+        paths = self._get_package_cache_paths(pkg)
 
-        if pkg not in self.schema_cache:
+        # Load schema from disk if exists
+        if os.path.exists(paths["schema"]):
+            with open(paths["schema"], "r") as f:
+                schema = json.load(f)
+            print("📂 Loaded schema from cache.")
+        else:
             extractor = SDKSchemaExtractor(pkg)
             schema = extractor.extract()
-            self.schema_cache[pkg] = schema
-            print(f"📦 Extracted {len(schema)} classes.")
+            with open(paths["schema"], "w") as f:
+                json.dump(schema, f)
+            print(f"📦 Extracted {len(schema)} classes and cached.")
 
-        if pkg not in self.search_cache:
-            self.search_cache[pkg] = HybridSearchEngine(self.schema_cache[pkg])
+        self.schema_cache[pkg] = schema
+
+        # Load index if exists
+        if os.path.exists(paths["index"]):
+            with open(paths["index"], "rb") as f:
+                search_engine = pickle.load(f)
+            print("📂 Loaded search index from cache.")
+        else:
+            search_engine = LightweightSearchEngine(schema)
+            with open(paths["index"], "wb") as f:
+                pickle.dump(search_engine, f)
+            print("💾 Search index cached.")
+
+        self.search_cache[pkg] = search_engine
 
         return {"status": "success", "package": pkg}
 

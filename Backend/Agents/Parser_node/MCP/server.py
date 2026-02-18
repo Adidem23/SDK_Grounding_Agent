@@ -7,7 +7,7 @@ mcp = FastMCP("Parser_Service_MCP")
 
 
 @mcp.tool()
-async def call_Parser_Service(package_name: str | None):
+async def call_Parser_Service(package_name: str | None, user_query:str |None):
     """
     Calls Parser_service api 
     and forwards the package_name.
@@ -16,7 +16,8 @@ async def call_Parser_Service(package_name: str | None):
     url = "http://localhost:8900/userquery/process"
 
     payload = {
-        "packageName": package_name
+        "packageName": package_name,
+        "userPackageQuery":user_query
     }
 
     try:

@@ -16,12 +16,23 @@ class ParserNodeAgentExecutor(AgentExecutor):
 
     async def execute(self, context:RequestContext, event_queue:EventQueue):
 
-        package_name= context.get_user_input()
+        user_query= context.get_user_input()
 
-        response=await self.agent.call_mcp_tools(package_name)
-        
-        if(response):
-            result=await self.agent.uploadSDKSchemaToPinecone(response)
+        package_name=await self.agent.extractPythonModule(user_query)
+
+        if(package_name):
+
+            response=await self.agent.call_mcp_tools(package_name,user_query)
+
+            final_answer_node_Prompt=f"""User Query is {user_query} and its retrived SDK Definations are {response}"""
+
+            if(response):
+                
+                FINAL_ANSWER_NODE_BASE_URL="http://localhost:8006"
+
+                result=await self.agent.delegateTasks(FINAL_ANSWER_NODE_BASE_URL,final_answer_node_Prompt)
+
+                
 
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
