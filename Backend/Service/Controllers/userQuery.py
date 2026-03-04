@@ -21,4 +21,6 @@ async def processUserQuery(request:packageNameQuery):
 
     response=engine.search(packageName,userQuery)
 
+    print(response)
+
     return response

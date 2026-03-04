@@ -8,10 +8,10 @@ import json
 import difflib
 import pickle
 import urllib.request
-import urllib.error
+import re
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
-from sklearn.feature_extraction.text import TfidfVectorizer
+from rank_bm25 import BM25Okapi
 
 
 # =====================================================
@@ -20,6 +20,28 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 CACHE_DIR = "sdk_cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+# =====================================================
+# UTILS
+# =====================================================
+
+def tokenize(text: str):
+    """
+    Strong tokenizer:
+    - Handles snake_case
+    - Handles camelCase
+    - Lowercases
+    - Removes symbols
+    """
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    tokens = re.findall(r"[a-zA-Z0-9_]+", text.lower())
+
+    final_tokens = []
+    for token in tokens:
+        final_tokens.extend(token.split("_"))
+
+    return [t for t in final_tokens if t]
 
 
 # =====================================================
@@ -44,11 +66,16 @@ class PackageResolver:
                 return {"status": "incompatible_python", "package": base_name}
             return {"status": "valid", "package": base_name}
 
-        suggestions = difflib.get_close_matches(base_name, self.package_list, n=3, cutoff=0.75)
+        suggestions = difflib.get_close_matches(
+            base_name, self.package_list, n=3, cutoff=0.75
+        )
 
         if suggestions:
             best_match = suggestions[0]
-            similarity = difflib.SequenceMatcher(None, base_name, best_match).ratio()
+            similarity = difflib.SequenceMatcher(
+                None, base_name, best_match
+            ).ratio()
+
             if similarity >= self.auto_correct_threshold:
                 return {"status": "auto_corrected", "package": best_match}
 
@@ -56,7 +83,9 @@ class PackageResolver:
 
     def _get_package_metadata(self, package_name: str):
         try:
-            with urllib.request.urlopen(self.PYPI_JSON_URL.format(package_name)) as response:
+            with urllib.request.urlopen(
+                self.PYPI_JSON_URL.format(package_name)
+            ) as response:
                 return json.load(response)
         except:
             return None
@@ -65,8 +94,12 @@ class PackageResolver:
         requires_python = metadata["info"].get("requires_python")
         if not requires_python:
             return True
+
         spec = SpecifierSet(requires_python)
-        current_version = Version(f"{sys.version_info.major}.{sys.version_info.minor}")
+        current_version = Version(
+            f"{sys.version_info.major}.{sys.version_info.minor}"
+        )
+
         return current_version in spec
 
     def _load_or_fetch_package_list(self):
@@ -102,7 +135,10 @@ class SDKSchemaExtractor:
         return inspect.cleandoc(doc) if doc else ""
 
     def _install_package(self):
-        subprocess.run([sys.executable, "-m", "pip", "install", self.package_name], check=True)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", self.package_name],
+            check=True
+        )
 
     def _import_package(self):
         try:
@@ -151,7 +187,10 @@ class SDKSchemaExtractor:
         extract_from_module(root_module)
 
         if hasattr(root_module, "__path__"):
-            for _, modname, _ in pkgutil.walk_packages(root_module.__path__, root_module.__name__ + "."):
+            for _, modname, _ in pkgutil.walk_packages(
+                root_module.__path__,
+                root_module.__name__ + "."
+            ):
                 try:
                     module = importlib.import_module(modname)
                     extract_from_module(module)
@@ -162,61 +201,79 @@ class SDKSchemaExtractor:
 
 
 # =====================================================
-# LIGHTWEIGHT SEARCH ENGINE
+# BM25 SEARCH ENGINE (METHOD LEVEL + BOOSTING)
 # =====================================================
 
-class LightweightSearchEngine:
+class BM25SearchEngine:
     def __init__(self, schema):
         self.schema = schema
         self.documents = []
-        self.class_keys = []
+        self.metadata = []
 
         self._build_documents()
 
-        self.vectorizer = TfidfVectorizer(
-            stop_words="english",
-            ngram_range=(1, 2),
-            max_features=10000
-        )
-
-        print("🔧 Building TF-IDF index...")
-        self.tfidf_matrix = self.vectorizer.fit_transform(self.documents)
-        print("✅ Index ready.")
+        print("🔧 Building BM25 index...")
+        self.bm25 = BM25Okapi(self.documents)
+        print("✅ BM25 index ready.")
 
     def _build_documents(self):
         for class_path, class_data in self.schema.items():
 
-            class_name = class_path.split(".")[-1]
-            description = (class_data.get("description") or "")[:400]
-            method_names = " ".join(class_data.get("methods", {}).keys())
+            class_description = class_data.get("description") or ""
 
-            text = f"""
-            Class {class_name}
-            Description {description}
-            Methods {method_names}
-            """
+            for method_name, method_data in class_data.get("methods", {}).items():
 
-            self.documents.append(text)
-            self.class_keys.append(class_path)
+                method_signature = method_data.get("signature") or ""
+                method_description = method_data.get("description") or ""
 
-    def search(self, query, top_k=3):
+                # Boost method name
+                boosted_method_name = " ".join([method_name] * 3)
 
-        query_vec = self.vectorizer.transform([query])
-        scores = (self.tfidf_matrix @ query_vec.T).toarray().flatten()
+                text = f"""
+                class {class_path}
+                class_description {class_description}
+                method {boosted_method_name}
+                signature {method_signature}
+                description {method_description}
+                """
 
-        top_indices = scores.argsort()[::-1][:top_k]
+                tokens = tokenize(text)
+
+                self.documents.append(tokens)
+                self.metadata.append({
+                    "class_path": class_path,
+                    "method_name": method_name
+                })
+
+    def search(self, query, top_k=5):
+
+        query_tokens = tokenize(query)
+        scores = self.bm25.get_scores(query_tokens)
+
+        ranked_indices = sorted(
+            range(len(scores)),
+            key=lambda i: scores[i],
+            reverse=True
+        )[:top_k]
 
         results = []
-        for idx in top_indices:
+
+        for idx in ranked_indices:
             if scores[idx] <= 0:
                 continue
 
-            class_path = self.class_keys[idx]
+            meta = self.metadata[idx]
+            class_path = meta["class_path"]
+            method_name = meta["method_name"]
+
+            method_data = self.schema[class_path]["methods"].get(method_name, {})
 
             results.append({
                 "class_path": class_path,
-                "description": self.schema[class_path]["description"],
-                "methods": self.schema[class_path]["methods"]
+                "method_name": method_name,
+                "signature": method_data.get("signature"),
+                "description": method_data.get("description"),
+                "score": float(scores[idx])
             })
 
         return results
@@ -235,9 +292,10 @@ class SDKGroundingEngine:
     def _get_package_cache_paths(self, pkg):
         pkg_dir = os.path.join(CACHE_DIR, pkg)
         os.makedirs(pkg_dir, exist_ok=True)
+
         return {
             "schema": os.path.join(pkg_dir, "schema.json"),
-            "index": os.path.join(pkg_dir, "index.pkl")
+            "index": os.path.join(pkg_dir, "bm25_index.pkl")
         }
 
     def load_package(self, package_name):
@@ -249,7 +307,7 @@ class SDKGroundingEngine:
         pkg = resolution["package"]
         paths = self._get_package_cache_paths(pkg)
 
-        # Load schema from disk if exists
+        # Load schema
         if os.path.exists(paths["schema"]):
             with open(paths["schema"], "r") as f:
                 schema = json.load(f)
@@ -259,20 +317,20 @@ class SDKGroundingEngine:
             schema = extractor.extract()
             with open(paths["schema"], "w") as f:
                 json.dump(schema, f)
-            print(f"📦 Extracted {len(schema)} classes and cached.")
+            print(f"📦 Extracted {len(schema)} classes.")
 
         self.schema_cache[pkg] = schema
 
-        # Load index if exists
+        # Load index
         if os.path.exists(paths["index"]):
             with open(paths["index"], "rb") as f:
                 search_engine = pickle.load(f)
-            print("📂 Loaded search index from cache.")
+            print("📂 Loaded BM25 index from cache.")
         else:
-            search_engine = LightweightSearchEngine(schema)
+            search_engine = BM25SearchEngine(schema)
             with open(paths["index"], "wb") as f:
                 pickle.dump(search_engine, f)
-            print("💾 Search index cached.")
+            print("💾 BM25 index cached.")
 
         self.search_cache[pkg] = search_engine
 

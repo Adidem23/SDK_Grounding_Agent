@@ -10,8 +10,8 @@ load_dotenv()
 
 async def run_code():
       engine=SDKGroundingEngine()
-      engine.load_package("opik")
-      response=engine.search("opik","how to update annotation queue in opik")
+      engine.load_package("fastapi")
+      response=engine.search("fastapi","how to use CORS_Middleware in fastapi")
       print(response)
       
 

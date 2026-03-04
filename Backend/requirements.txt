@@ -18,3 +18,4 @@ mcp
 fastmcp
 pinecone
 scikit-learn
+rank-bm25
