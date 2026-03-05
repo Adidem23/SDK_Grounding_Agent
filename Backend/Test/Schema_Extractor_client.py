@@ -10,8 +10,8 @@ load_dotenv()
 
 async def run_code():
       engine=SDKGroundingEngine()
-      engine.load_package("fastapi")
-      response=engine.search("fastapi","how to use CORS_Middleware in fastapi")
+      engine.load_package("langchain-mcp-adapters")
+      response=engine.search("langchain-mcp-adapters","how to use load_mcp_tools in langchain_mcp_adapters")
       print(response)
       
 

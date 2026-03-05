@@ -3,3 +3,4 @@ fastapi
 pydantic
 packaging
 scikit-learn
+rank-bm25

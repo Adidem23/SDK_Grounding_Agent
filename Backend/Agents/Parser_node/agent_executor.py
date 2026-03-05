@@ -20,17 +20,18 @@ class ParserNodeAgentExecutor(AgentExecutor):
 
         package_name=await self.agent.extractPythonModule(user_query)
 
-        if(package_name):
 
-            response=await self.agent.call_mcp_tools(package_name,user_query)
+        # if(package_name):
 
-            final_answer_node_Prompt=f"""User Query is {user_query} and its retrived SDK Definations are {response}"""
+        #     response=await self.agent.call_mcp_tools(package_name,user_query)
 
-            if(response):
+        #     final_answer_node_Prompt=f"""User Query is {user_query} and its retrived SDK Definations are {response}"""
+
+        #     if(response):
                 
-                FINAL_ANSWER_NODE_BASE_URL="http://localhost:8006"
+        #         FINAL_ANSWER_NODE_BASE_URL="http://localhost:8006"
 
-                result=await self.agent.delegateTasks(FINAL_ANSWER_NODE_BASE_URL,final_answer_node_Prompt)
+        #         result=await self.agent.delegateTasks(FINAL_ANSWER_NODE_BASE_URL,final_answer_node_Prompt)
 
                 
 
@@ -40,7 +41,7 @@ class ParserNodeAgentExecutor(AgentExecutor):
                 task_id=context.task_id,
                 artifact=new_text_artifact(
                     "Parser_agent_answer",
-                     str(result)
+                     str(package_name)
                 )
 
             )

@@ -1,110 +1,99 @@
-import os 
+import os
+import re
+import requests
 from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from dotenv import load_dotenv
 from google.genai import types
-from google.adk.tools.toolbox_toolset import ToolboxToolset
-from pinecone import Pinecone
 from fastmcp import Client
 from agent.client_class import Agent_Client_Class
 
-
 load_dotenv()
+
 
 class ParserAgent:
 
     def __init__(self):
-        
-        self.agent=Agent(
+
+        self.agent = Agent(
             name="ParserAgent",
             model="gemini-2.5-flash",
-            instruction=("""
+            instruction="""
 You are a Parser Node in a distributed AI orchestration system.
 
 Your job is to provide structured SDK schema information for a validated Python package.
 
-You do NOT generate code.
-You do NOT answer user questions.
-You do NOT explain concepts.
-You do NOT hallucinate functions.
-
-Your responsibilities:
-
-1. Receive a canonical Python package name.
-2. Call the SDK extraction engine.
-3. Return the full structured schema JSON.
-4. If extraction fails, return a structured error.
-5. Do not modify or summarize the schema.
-6. Do not add explanations.
-7. Do not infer missing functions.
-8. Do not guess APIs.
-
 Rules:
-
 - Only operate on validated package names.
-- If package installation fails, return an error object.
-- If package is incompatible, return an error object.
 - Output must be structured JSON only.
-- No additional text outside JSON.
-- No natural language explanations.
-
-Output format:
-
-If success:
-{
-  "status": "success",
-  "package": "<package_name>",
-  "schema": { ... full extracted schema ... }
-}
-
-If failure:
-{
-  "status": "error",
-  "message": "<reason>"
-}
-        """),
-
+- No explanations.
+"""
         )
 
-        self.packageAgent=Agent(
+        self.packageAgent = Agent(
             name="Package_Name_Extractor",
             model="gemini-2.5-flash",
-            instruction=("""
+            instruction="""
 You are a Python package name extraction engine.
-
-Your task is to extract the most relevant Python package name mentioned or implied in the user query.
 
 Rules:
 - Return ONLY the package name.
 - Output must be lowercase.
-- Do not include explanations.
-- Do not include extra words.
-- Do not include punctuation.
-- If no clear Python package can be identified, return: unknown
-- If multiple packages are mentioned, return the most relevant one.
-
-Examples:
-
-User: how to upsert a collection in pinecone
-Output: pinecone
-
-User: how to create api using fastapi
-Output: fastapi
-
-User: how to send request using requests library
-Output: requests
-
-User: explain what is vector database
-Output: unknown
-
-
-""")
+- No explanations.
+- If no package exists return: unknown
+"""
         )
 
-    async def extractPythonModule(self,user_query:str|None):
-       
-        sessionService=InMemorySessionService()
+    # -------------------------
+    # Utility Functions
+    # -------------------------
+
+    def normalize_package_name(self, pkg: str | None):
+
+        if not pkg:
+            return None
+
+        pkg = pkg.strip().lower()
+        pkg = pkg.replace(".", "")
+        pkg = pkg.replace(",", "")
+        pkg = pkg.replace("`", "")
+        pkg = pkg.replace("'", "")
+
+        return pkg
+
+    def validate_package(self, pkg: str):
+
+        if not pkg or pkg == "unknown":
+            return False
+
+        try:
+            url = f"https://pypi.org/pypi/{pkg}/json"
+            response = requests.get(url, timeout=3)
+
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    def regex_extract_package(self, query: str):
+
+        if not query:
+            return None
+
+        match = re.search(r"in ([a-zA-Z0-9_]+)", query.lower())
+
+        if match:
+            return match.group(1)
+
+        return None
+
+    # -------------------------
+    # LLM Extraction
+    # -------------------------
+
+    async def extractPythonModule(self, user_query: str | None):
+
+        sessionService = InMemorySessionService()
 
         await sessionService.create_session(
             app_name="Package_Name_Extractor",
@@ -112,43 +101,79 @@ Output: unknown
             session_id="session1",
         )
 
-        runner=Runner(
+        runner = Runner(
             app_name="Package_Name_Extractor",
             agent=self.packageAgent,
             session_service=sessionService,
         )
 
-        user_message=types.Content(
+        user_message = types.Content(
             role="user",
             parts=[types.Part(text=user_query)]
         )
 
         async for event in runner.run_async(
-            user_id="user1",
-            session_id="session1",
-            new_message=user_message
+                user_id="user1",
+                session_id="session1",
+                new_message=user_message
         ):
-            
+
             if event.is_final_response():
-                return event.content.parts[0].text
-                
 
-    async def call_mcp_tools(self,package_name:str|None,user_query:str|None):
+                raw_output = event.content.parts[0].text
 
-        client=Client(
-            "http://localhost:9000/mcp"
-        )
+                # Normalize
+                pkg = self.normalize_package_name(raw_output)
+
+                # Validate via PyPI
+                if self.validate_package(pkg):
+                    return pkg
+
+                # Regex fallback
+                fallback = self.regex_extract_package(user_query)
+
+                if fallback and self.validate_package(fallback):
+                    return fallback
+
+                return "unknown"
+
+    # -------------------------
+    # MCP Tool Call
+    # -------------------------
+
+    async def call_mcp_tools(self, package_name: str | None, user_query: str | None):
+
+        if package_name == "unknown":
+            return {
+                "status": "error",
+                "message": "Python package could not be identified"
+            }
+
+        client = Client("http://localhost:9000/mcp")
 
         async with client:
 
-            result = await client.call_tool("call_Parser_Service", {"package_name":f"{package_name}","user_query":user_query})
+            result = await client.call_tool(
+                "call_Parser_Service",
+                {
+                    "package_name": package_name,
+                    "user_query": user_query
+                }
+            )
 
             return result
-    
-    async def delegateTasks(self, BASE_AGENT_URL:str|None , user_input:str|None):
-       
-        new_client=Agent_Client_Class()
 
-        response= await new_client.create_connection(BASE_AGENT_URL,user_input)
+    # -------------------------
+    # Delegate to Answer Agent
+    # -------------------------
+
+    async def delegateTasks(self, BASE_AGENT_URL: str | None, user_input: str | None):
+
+        new_client = Agent_Client_Class()
+
+        response = await new_client.create_connection(
+            BASE_AGENT_URL,
+            user_input
+        )
 
         return response
